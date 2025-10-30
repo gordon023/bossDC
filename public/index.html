@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Boss Timer - Punpun</title>
+  <title>Boss Timer - Real-time</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
   <style>
-    /* simple clean dark theme tweaks */
     body { background: #0f1724; color: #e6eef8; }
     .card { background: #0b1220; border: 1px solid #132034; }
     .muted { color: #97a6bf; font-size: 0.95rem; }
@@ -18,12 +18,10 @@
     <header class="mb-6">
       <h1 class="text-2xl font-semibold">Boss kaba</h1>
       <p class="muted">Real-time bitch.</p>
-      <!-- viewer count under title -->
-      <div id="viewerWrapper" class="mt-2 small muted">👁️ <span id="viewerCount">0</span> viewing</div>
+      <p id="viewerCount" class="text-sm text-green-400">0 viewing</p>
     </header>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Left: Upload + Manual -->
       <div class="card p-5 rounded-lg">
         <h2 class="font-medium mb-3">Upload screenshot</h2>
         <input id="imageUpload" type="file" accept="image/*" class="mb-3 w-full bg-gray-900 p-2 rounded" />
@@ -48,10 +46,9 @@
         <p id="manualStatus" class="small"></p>
       </div>
 
-      <!-- Right: Active Timers only (Spawned table removed) -->
       <div class="card p-5 rounded-lg">
         <h2 class="font-medium mb-3">Active Timers</h2>
-        <div class="overflow-auto max-h-64">
+        <div class="overflow-auto max-h-80">
           <table class="w-full text-left">
             <thead class="text-sm text-gray-300">
               <tr>
@@ -68,15 +65,9 @@
         </div>
       </div>
     </div>
-
     <footer class="mt-6 muted small">Build by punpun 2025.</footer>
   </div>
-
-  <!-- socket.io client -->
   <script src="/socket.io/socket.io.js"></script>
-  <!-- Tesseract.js (browser OCR) -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@v2.1.5/dist/tesseract.min.js"></script>
-  <!-- client logic -->
-  <script src="/client.js"></script>
+  <script src="client.js"></script>
 </body>
 </html>
