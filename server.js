@@ -1,150 +1,100 @@
-// server.js (CommonJS)
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
+import express from "express";
+import { Server } from "socket.io";
+import http from "http";
+import cors from "cors";
+import fetch from "node-fetch";
+import pkg from "pg";
+const { Pool } = pkg;
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, "timers.json");
-
-// <-- put your webhook here (you gave this earlier; it's used as-is) -->
-const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1433449406056763557/nifC_lCD78cMTOoMY6ryDBlain76udKiIEVOitIWT_n8XqygjGj_GWU0zDEf8v6GTxGu";
-
-// special delete code required
-const DELETE_CODE = "bernbern";
-
-// load or init timers file
-let timers = [];
-try {
-  if (fs.existsSync(DATA_FILE)) {
-    const raw = fs.readFileSync(DATA_FILE, "utf8");
-    timers = JSON.parse(raw) || [];
-  } else {
-    timers = [];
-    fs.writeFileSync(DATA_FILE, JSON.stringify(timers, null, 2));
-  }
-} catch (e) {
-  console.error("Failed to read timers.json:", e);
-  timers = [];
-}
-
-function saveTimers() {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(timers, null, 2));
-  } catch (err) {
-    console.error("Failed to save timers.json:", err);
-  }
-}
-
-// static public folder
-app.use(express.static(path.join(__dirname, "public")));
+app.use(cors());
 app.use(express.json());
+app.use(express.static("public"));
 
-// simple API endpoint (returns timers)
-app.get("/api/timers", (req, res) => {
-  res.json(timers);
+// ==== PostgreSQL setup ====
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || "postgresql://postgres:password@localhost:5432/bosstimer"
 });
 
-// socket.io realtime
-io.on("connection", (socket) => {
-  console.log("conn:", socket.id);
+// Discord webhook
+const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1433449406056763557/nifC_lCD78cMTOoMY6ryDBlain76udKiIEVOitIWT_n8XqygjGj_GWU0zDEf8v6GTxGu";
 
-  // send initial
-  socket.emit("init", timers);
+// Track connected clients
+let viewerCount = 0;
 
-  // broadcast viewer count
-  io.emit("viewerCount", { count: io.engine.clientsCount });
-
-  socket.on("addTimer", (obj) => {
-    if (!obj || !obj.id) return;
-    // avoid duplicate id
-    if (!timers.find(t => t.id === obj.id)) {
-      timers.push({ ...obj, spawned: false });
-      saveTimers();
-      io.emit("update", timers);
-      console.log("Added timer:", obj.name);
-    }
-  });
-
-  socket.on("deleteTimer", (payload) => {
-    // payload: { id, code }
-    try {
-      if (!payload || !payload.id) return;
-      const { id, code } = payload;
-      if (code !== DELETE_CODE) {
-        socket.emit("deleteDenied", { id, message: "Special code incorrect. Delete canceled." });
-        return;
-      }
-      const before = timers.length;
-      timers = timers.filter(t => t.id !== id);
-      if (timers.length !== before) {
-        saveTimers();
-        io.emit("update", timers);
-        socket.emit("deletedSuccess", { id });
-        console.log("Deleted timer:", id);
-      }
-    } catch (e) {
-      console.error("deleteTimer err:", e);
-    }
-  });
+// ===== SOCKET CONNECTION =====
+io.on("connection", async (socket) => {
+  viewerCount++;
+  io.emit("viewerCount", viewerCount);
+  const result = await pool.query("SELECT * FROM timers ORDER BY acquired DESC");
+  socket.emit("updateTimers", result.rows);
 
   socket.on("disconnect", () => {
-    console.log("disconn:", socket.id);
-    io.emit("viewerCount", { count: io.engine.clientsCount });
+    viewerCount--;
+    io.emit("viewerCount", viewerCount);
   });
 });
 
-// ---- Discord notifier ----
-// track which IDs we've warned/announced in-memory
-const warned15 = new Set();
-const announcedSpawn = new Set();
+// ===== API ROUTES =====
 
-async function postDiscord(content) {
+// Add new timer
+app.post("/add", async (req, res) => {
+  const { id, name, location, acquired, nextSpawn } = req.body;
+  await pool.query(
+    "INSERT INTO timers (id, name, location, acquired, next_spawn) VALUES ($1,$2,$3,$4,$5)",
+    [id, name, location, acquired, nextSpawn]
+  );
+  updateAllClients();
+  res.json({ success: true });
+});
+
+// Delete timer
+app.post("/delete", async (req, res) => {
+  const { id, code } = req.body;
+  if (code !== "bernbern") return res.status(403).json({ error: "Invalid code" });
+  await pool.query("DELETE FROM timers WHERE id=$1", [id]);
+  updateAllClients();
+  res.json({ success: true });
+});
+
+// Broadcast all timers
+async function updateAllClients() {
+  const result = await pool.query("SELECT * FROM timers ORDER BY acquired DESC");
+  io.emit("updateTimers", result.rows);
+}
+
+// ====== Timer Monitoring (for Discord Alerts) ======
+async function monitorTimers() {
+  const now = new Date();
+  const result = await pool.query("SELECT * FROM timers");
+  for (const t of result.rows) {
+    const diff = new Date(t.next_spawn) - now;
+    if (diff <= 0) {
+      await sendToDiscord(`🔥 ${t.name} has spawned!`);
+      await pool.query("DELETE FROM timers WHERE id=$1", [t.id]);
+      updateAllClients();
+    } else if (diff <= 15 * 60 * 1000 && diff > 14 * 60 * 1000) {
+      await sendToDiscord(`⚔️ ${t.name} will spawn in 15 minutes!`);
+    }
+  }
+}
+setInterval(monitorTimers, 60000); // every 1 minute
+
+async function sendToDiscord(message) {
   try {
-    await axios.post(DISCORD_WEBHOOK_URL, { content });
-  } catch (e) {
-    console.error("Discord webhook error:", e.message || e);
+    await fetch(DISCORD_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: message })
+    });
+  } catch (err) {
+    console.error("Discord Webhook Error:", err);
   }
 }
 
-// Check every 30 seconds for 15-min and spawn events
-setInterval(async () => {
-  if (!timers || timers.length === 0) return;
-  const now = Date.now();
-
-  for (const t of timers) {
-    if (!t.nextSpawn) continue;
-    const spawnMs = new Date(t.nextSpawn).getTime();
-    const minsLeft = Math.floor((spawnMs - now) / 60000);
-
-    // 15-minute warning
-    if (minsLeft === 15 && !warned15.has(t.id) && !t.spawned) {
-      warned15.add(t.id);
-      const msg = `⚠️ **${t.name}** will spawn in **15 minutes!**`;
-      await postDiscord(msg);
-      console.log("Discord 15m:", t.name);
-    }
-
-    // spawn
-    if (minsLeft <= 0 && !announcedSpawn.has(t.id)) {
-      announcedSpawn.add(t.id);
-      // mark spawned
-      t.spawned = true;
-      t.spawnedTime = new Date().toISOString();
-      saveTimers();
-      io.emit("update", timers);
-      const msg = `🟢 **${t.name}** has spawned!`;
-      await postDiscord(msg);
-      console.log("Discord spawn:", t.name);
-    }
-  }
-}, 30 * 1000);
-
-// start server
-server.listen(PORT, () => console.log(`Server running on ${PORT}`));
+// ===== START SERVER =====
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
