@@ -14,21 +14,40 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
-// ==== PostgreSQL setup ====
+// === PostgreSQL connection ===
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://postgres:password@localhost:5432/bosstimer"
+  connectionString:
+    process.env.DATABASE_URL ||
+    "postgresql://postgres:password@localhost:5432/bosstimer"
 });
 
-// Discord webhook
-const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1433449406056763557/nifC_lCD78cMTOoMY6ryDBlain76udKiIEVOitIWT_n8XqygjGj_GWU0zDEf8v6GTxGu";
+// === Auto-create table if missing ===
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS timers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      location TEXT,
+      acquired TIMESTAMP NOT NULL,
+      next_spawn TIMESTAMP NOT NULL
+    );
+  `);
+  console.log("✅ PostgreSQL table 'timers' verified/created.");
+}
+initDB();
 
-// Track connected clients
+// === Discord webhook ===
+const DISCORD_WEBHOOK =
+  "https://discord.com/api/webhooks/1433449406056763557/nifC_lCD78cMTOoMY6ryDBlain76udKiIEVOitIWT_n8XqygjGj_GWU0zDEf8v6GTxGu";
+
+// === Viewer count ===
 let viewerCount = 0;
 
-// ===== SOCKET CONNECTION =====
+// === Socket connections ===
 io.on("connection", async (socket) => {
   viewerCount++;
   io.emit("viewerCount", viewerCount);
+
   const result = await pool.query("SELECT * FROM timers ORDER BY acquired DESC");
   socket.emit("updateTimers", result.rows);
 
@@ -38,44 +57,55 @@ io.on("connection", async (socket) => {
   });
 });
 
-// ===== API ROUTES =====
+// === API routes ===
 
 // Add new timer
 app.post("/add", async (req, res) => {
   const { id, name, location, acquired, nextSpawn } = req.body;
-  await pool.query(
-    "INSERT INTO timers (id, name, location, acquired, next_spawn) VALUES ($1,$2,$3,$4,$5)",
-    [id, name, location, acquired, nextSpawn]
-  );
-  updateAllClients();
-  res.json({ success: true });
+  try {
+    await pool.query(
+      "INSERT INTO timers (id, name, location, acquired, next_spawn) VALUES ($1,$2,$3,$4,$5)",
+      [id, name, location, acquired, nextSpawn]
+    );
+    await updateAllClients();
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Add Timer Error:", err);
+    res.status(500).json({ error: "Failed to add timer." });
+  }
 });
 
-// Delete timer
+// Delete timer (admin only)
 app.post("/delete", async (req, res) => {
   const { id, code } = req.body;
   if (code !== "bernbern") return res.status(403).json({ error: "Invalid code" });
-  await pool.query("DELETE FROM timers WHERE id=$1", [id]);
-  updateAllClients();
-  res.json({ success: true });
+  try {
+    await pool.query("DELETE FROM timers WHERE id=$1", [id]);
+    await updateAllClients();
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete Error:", err);
+    res.status(500).json({ error: "Failed to delete timer." });
+  }
 });
 
-// Broadcast all timers
+// === Helpers ===
 async function updateAllClients() {
   const result = await pool.query("SELECT * FROM timers ORDER BY acquired DESC");
   io.emit("updateTimers", result.rows);
 }
 
-// ====== Timer Monitoring (for Discord Alerts) ======
+// === Timer monitoring (Discord alerts) ===
 async function monitorTimers() {
   const now = new Date();
   const result = await pool.query("SELECT * FROM timers");
   for (const t of result.rows) {
     const diff = new Date(t.next_spawn) - now;
+
     if (diff <= 0) {
       await sendToDiscord(`🔥 ${t.name} has spawned!`);
       await pool.query("DELETE FROM timers WHERE id=$1", [t.id]);
-      updateAllClients();
+      await updateAllClients();
     } else if (diff <= 15 * 60 * 1000 && diff > 14 * 60 * 1000) {
       await sendToDiscord(`⚔️ ${t.name} will spawn in 15 minutes!`);
     }
@@ -95,6 +125,8 @@ async function sendToDiscord(message) {
   }
 }
 
-// ===== START SERVER =====
+// === Start Server ===
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+server.listen(PORT, () =>
+  console.log(`🚀 Server running on http://localhost:${PORT}`)
+);
