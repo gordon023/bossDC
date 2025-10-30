@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS timers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  location TEXT,
+  acquired TIMESTAMP NOT NULL,
+  next_spawn TIMESTAMP NOT NULL
+);
