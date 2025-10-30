@@ -1,49 +1,82 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Boss Timer</title>
-    <style>
-      body {
-        font-family: sans-serif;
-        background: #111;
-        color: #eee;
-        text-align: center;
-      }
-      #timers {
-        list-style: none;
-        padding: 0;
-      }
-      li {
-        background: #222;
-        margin: 8px auto;
-        padding: 10px;
-        width: 300px;
-        border-radius: 8px;
-      }
-      button {
-        margin-left: 10px;
-      }
-      #viewers {
-        margin-top: 10px;
-        opacity: 0.8;
-      }
-    </style>
-  </head>
-  <body>
-    <h2>Boss Timers</h2>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Boss Timer - Punpun</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    /* simple clean dark theme tweaks */
+    body { background: #0f1724; color: #e6eef8; }
+    .card { background: #0b1220; border: 1px solid #132034; }
+    .muted { color: #97a6bf; font-size: 0.95rem; }
+    .small { font-size: 0.85rem; color: #9fb0d4; }
+  </style>
+</head>
+<body class="min-h-screen flex items-start justify-center p-6">
+  <div class="w-full max-w-6xl">
+    <header class="mb-6">
+      <h1 class="text-2xl font-semibold">Boss kaba</h1>
+      <p class="muted">Real-time bitch.</p>
+      <!-- viewer count under title -->
+      <div id="viewerWrapper" class="mt-2 small muted">👁️ <span id="viewerCount">0</span> viewing</div>
+    </header>
 
-    <input id="bossName" placeholder="Boss name" />
-    <input id="hours" type="number" placeholder="Hours" />
-    <input id="minutes" type="number" placeholder="Minutes" />
-    <button onclick="addTimer()">Add Timer</button>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Left: Upload + Manual -->
+      <div class="card p-5 rounded-lg">
+        <h2 class="font-medium mb-3">Upload screenshot</h2>
+        <input id="imageUpload" type="file" accept="image/*" class="mb-3 w-full bg-gray-900 p-2 rounded" />
+        <div class="flex gap-2 mb-3">
+          <button id="uploadBtn" class="px-3 py-2 bg-blue-500 rounded text-black font-medium">Upload & Detect</button>
+          <button id="clearOcrBtn" class="px-3 py-2 bg-gray-700 rounded">Clear</button>
+        </div>
+        <p id="status" class="small mb-4"></p>
 
-    <ul id="timers"></ul>
+        <h2 class="font-medium mb-2">Manual Add</h2>
+        <div class="mb-2">
+          <label class="small mb-1 block">Boss</label>
+          <select id="manualBoss" class="w-full p-2 rounded bg-gray-900"></select>
+        </div>
+        <div class="mb-2">
+          <label class="small mb-1 block">Acquired time</label>
+          <input id="manualAcquired" type="datetime-local" class="w-full p-2 rounded bg-gray-900" />
+        </div>
+        <div class="mb-2">
+          <button id="manualAdd" class="w-full py-2 bg-green-500 text-black font-medium rounded">Add Boss</button>
+        </div>
+        <p id="manualStatus" class="small"></p>
+      </div>
 
-    <p id="viewers">👁️ 0 viewing</p>
+      <!-- Right: Active Timers only (Spawned table removed) -->
+      <div class="card p-5 rounded-lg">
+        <h2 class="font-medium mb-3">Active Timers</h2>
+        <div class="overflow-auto max-h-64">
+          <table class="w-full text-left">
+            <thead class="text-sm text-gray-300">
+              <tr>
+                <th class="px-2 py-1">Boss</th>
+                <th class="px-2 py-1">Location</th>
+                <th class="px-2 py-1">Acquired</th>
+                <th class="px-2 py-1">Next Spawn</th>
+                <th class="px-2 py-1">Remaining</th>
+                <th class="px-2 py-1">Action</th>
+              </tr>
+            </thead>
+            <tbody id="activeBody" class="text-sm"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="client.js"></script>
-  </body>
+    <footer class="mt-6 muted small">Build by punpun 2025.</footer>
+  </div>
+
+  <!-- socket.io client -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Tesseract.js (browser OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@v2.1.5/dist/tesseract.min.js"></script>
+  <!-- client logic -->
+  <script src="/client.js"></script>
+</body>
 </html>
