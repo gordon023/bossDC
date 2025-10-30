@@ -1,224 +1,160 @@
-// public/client.js
 const socket = io();
-
-const bossReference = {
-  "Venatus": { time: 10, loc: "Corrupted Basin" },
-  "Viorent": { time: 10, loc: "Crescent Lake" },
-  "Ego": { time: 21, loc: "Ulan Canyon" },
-  "Livera": { time: 24, loc: "Protector`s Ruins" },
-  "Araneo": { time: 24, loc: "Lower Tomb of Tyriosa 1F" },
-  "Undomiel": { time: 24, loc: "Secret Laboratory" },
-  "Lady Dalia": { time: 18, loc: "Twilight Hill" },
-  "General Aquleus": { time: 29, loc: "Lower Tomb of Tyriosa 2F" },
-  "Amentis": { time: 29, loc: "Land of Glory" },
-  "Baron Braudmore": { time: 32, loc: "Battlefield of Templar" },
-  "Wannitas": { time: 48, loc: "Plateau of Revolution" },
-  "Metus": { time: 48, loc: "Plateau of Revolution" },
-  "Duplican": { time: 48, loc: "Plateau of Revolution" },
-  "Shuliar": { time: 95, loc: "Ruins of the War" },
-  "Gareth": { time: 32, loc: "Deadman`s Land District 1" },
-  "Titore": { time: 37, loc: "Deadman`s Land District 2" },
-  "Larba": { time: 35, loc: "Ruins of the War" },
-  "Catena": { time: 35, loc: "Deadman`s Land District 3" },
-  "Secreta": { time: 62, loc: "Silvergrass Field" },
-  "Ordo": { time: 62, loc: "Silvergrass Field" },
-  "Asta": { time: 62, loc: "Silvergrass Field" },
-  "Supore": { time: 62, loc: "Silvergrass Field" }
-};
-
-// UI elements
-const manualBoss = document.getElementById("manualBoss");
-const manualAcquired = document.getElementById("manualAcquired");
-const manualAddBtn = document.getElementById("manualAdd");
-const manualStatus = document.getElementById("manualStatus");
+const viewerCountEl = document.getElementById("viewerCount");
+const activeBody = document.getElementById("activeBody");
 const imageUpload = document.getElementById("imageUpload");
 const uploadBtn = document.getElementById("uploadBtn");
 const clearOcrBtn = document.getElementById("clearOcrBtn");
 const statusEl = document.getElementById("status");
-const activeBody = document.getElementById("activeBody");
-const viewerCountEl = document.getElementById("viewerCount");
+const manualBoss = document.getElementById("manualBoss");
+const manualAcquired = document.getElementById("manualAcquired");
+const manualAdd = document.getElementById("manualAdd");
+const manualStatus = document.getElementById("manualStatus");
 
-let timers = [];
-
-// populate boss dropdown
-function populateBossDropdown() {
-  manualBoss.innerHTML = "<option value=''>Select Boss</option>";
-  Object.keys(bossReference).forEach(name => {
-    const o = document.createElement("option");
-    o.value = name;
-    o.textContent = name;
-    manualBoss.appendChild(o);
-  });
-}
-populateBossDropdown();
-
-// helper - create timer object
-function makeTimerObj(name, acquiredDate) {
-  const ref = bossReference[name] || { time: 24, loc: "Unknown" };
-  const acquired = new Date(acquiredDate);
-  const nextSpawn = new Date(acquired.getTime() + ref.time * 60 * 60 * 1000);
-  return {
-    id: `${Date.now()}-${Math.floor(Math.random()*10000)}`,
-    name,
-    location: ref.loc,
-    acquired: acquired.toISOString(),
-    nextSpawn: nextSpawn.toISOString()
-  };
-}
-
-// receive initial data
-socket.on("init", (data) => {
-  timers = (data || []);
-  renderAll();
+// Example boss list
+const bossList = [
+  "Venatus", "Kafra", "Eddga", "Orc Lord", "Dracula",
+  "Phreeoni", "Baphomet", "Stormy Knight", "Dark Lord", "Amon Ra"
+];
+bossList.forEach(b => {
+  const opt = document.createElement("option");
+  opt.value = b;
+  opt.textContent = b;
+  manualBoss.appendChild(opt);
 });
 
-// full update from server
-socket.on("update", (data) => {
-  timers = (data || []);
-  renderAll();
-});
+// ====== SOCKET.IO ======
+socket.on("updateTimers", timers => renderTimers(timers));
+socket.on("viewerCount", n => viewerCountEl.textContent = n);
 
-socket.on("viewerCount", (payload) => {
-  const c = payload && payload.count ? payload.count : payload;
-  viewerCountEl.textContent = c;
-});
-
-socket.on("deleteDenied", (payload) => {
-  alert(payload && payload.message ? payload.message : "Delete denied.");
-});
-
-socket.on("deletedSuccess", (payload) => {
-  manualStatus.textContent = "Delete successful.";
-  setTimeout(()=> manualStatus.textContent = "", 2500);
-});
-
-// Add manual boss
-manualAddBtn.addEventListener("click", () => {
-  const name = manualBoss.value;
-  const timeVal = manualAcquired.value;
-  if (!name || !timeVal) {
-    manualStatus.textContent = "Please select boss and acquired time.";
-    return;
-  }
-  const obj = makeTimerObj(name, timeVal);
-  socket.emit("addTimer", obj);
-  manualStatus.textContent = `Added ${name}.`;
-  manualBoss.value = "";
-  manualAcquired.value = "";
-  setTimeout(()=> manualStatus.textContent = "", 2000);
-});
-
-// OCR Upload handler (in-browser with Tesseract.js)
-uploadBtn.addEventListener("click", async () => {
-  const file = imageUpload.files[0];
-  if (!file) { statusEl.textContent = "Choose an image first."; return; }
-  statusEl.textContent = "Running OCR...";
-  try {
-    // use Tesseract.js in browser
-    const worker = Tesseract.createWorker({
-      logger: m => {
-        // optional: you can show progress: m.progress
-      }
-    });
-    await worker.load();
-    await worker.loadLanguage('eng');
-    await worker.initialize('eng');
-
-    const { data: { text } } = await worker.recognize(file);
-    await worker.terminate();
-
-    if (!text || !text.trim()) {
-      statusEl.textContent = "No text detected.";
-      return;
-    }
-    statusEl.textContent = "OCR complete. Parsing...";
-
-    const lowered = text.toLowerCase();
-    const bossName = Object.keys(bossReference).find(b => lowered.includes(b.toLowerCase()));
-
-    // extract time patterns (hh:mm with optional AM/PM)
-    let acquiredTime = new Date();
-    const acqMatch = text.match(/acquired[^\d]*(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/i);
-    if (acqMatch) {
-      let timeStr = acqMatch[1].replace('.', ':').trim();
-      const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-      if (!isNaN(parsed)) acquiredTime = parsed;
-    } else {
-      const altMatch = text.match(/(obtained|received)[^\d]*(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/i);
-      if (altMatch) {
-        let timeStr = altMatch[2].replace('.', ':').trim();
-        const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-        if (!isNaN(parsed)) acquiredTime = parsed;
-      } else {
-        const anyMatch = text.match(/(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/);
-        if (anyMatch) {
-          let timeStr = anyMatch[1].replace('.', ':').trim();
-          const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-          if (!isNaN(parsed)) acquiredTime = parsed;
-        }
-      }
-    }
-
-    if (!bossName) {
-      statusEl.textContent = "No boss name detected from image.";
-      return;
-    }
-
-    const timerObj = makeTimerObj(bossName, acquiredTime.toISOString());
-    socket.emit("addTimer", timerObj);
-    statusEl.textContent = `Detected ${bossName}. Added timer.`;
-    imageUpload.value = "";
-    setTimeout(()=> statusEl.textContent = "", 3000);
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = "OCR failed.";
-  }
-});
-
-clearOcrBtn.addEventListener("click", () => {
-  imageUpload.value = "";
-  statusEl.textContent = "";
-});
-
-// delete handler (asks for special code first)
-window.deleteTimer = function(id) {
-  const code = prompt("You want to delete this timer? Please input special code");
-  if (code === null) return; // canceled
-  socket.emit("deleteTimer", { id, code });
-};
-
-// Render active timers (spawned table intentionally removed)
-function renderAll() {
-  const now = Date.now();
-  const activeList = (timers || []).filter(t => {
-    const next = new Date(t.nextSpawn).getTime();
-    return !isNaN(next) && next > now;
-  });
-
+// ====== FUNCTIONS ======
+async function renderTimers(timers) {
   activeBody.innerHTML = "";
-  activeList.forEach(t => {
-    const next = new Date(t.nextSpawn).getTime();
-    const remainingSec = Math.max(0, Math.floor((next - Date.now())/1000));
-    const hrs = Math.floor(remainingSec / 3600);
-    const mins = Math.floor((remainingSec % 3600) / 60);
-    const secs = remainingSec % 60;
+  timers.forEach(t => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="px-2 py-1">${escapeHtml(t.name)}</td>
-      <td class="px-2 py-1">${escapeHtml(t.location || "")}</td>
-      <td class="px-2 py-1">${new Date(t.acquired).toLocaleString()}</td>
-      <td class="px-2 py-1">${new Date(t.nextSpawn).toLocaleString()}</td>
-      <td class="px-2 py-1">${hrs}h ${mins}m ${secs}s</td>
-      <td class="px-2 py-1"><button class="px-2 py-1 bg-red-600 rounded text-black" onclick="deleteTimer('${t.id}')">Delete</button></td>
+      <td>${t.name}</td>
+      <td>${t.location || "-"}</td>
+      <td>${new Date(t.acquired).toLocaleString()}</td>
+      <td>${new Date(t.next_spawn).toLocaleString()}</td>
+      <td>${getRemaining(t.next_spawn)}</td>
+      <td><button class="bg-red-600 text-white px-2 py-1 rounded deleteBtn" data-id="${t.id}">Delete</button></td>
     `;
     activeBody.appendChild(tr);
   });
+  attachDeleteEvents();
 }
 
-function escapeHtml(s) {
-  if (!s) return "";
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function getRemaining(nextSpawn) {
+  const diff = new Date(nextSpawn) - new Date();
+  if (diff <= 0) return "Spawned";
+  const hrs = Math.floor(diff / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+  const secs = Math.floor((diff % 60000) / 1000);
+  return `${hrs}h ${mins}m ${secs}s`;
 }
 
-// keep ticking UI every second
-setInterval(renderAll, 1000);
+function attachDeleteEvents() {
+  document.querySelectorAll(".deleteBtn").forEach(btn => {
+    btn.onclick = async () => {
+      const code = prompt("You want to delete this timer? Please input special code:");
+      if (code !== "bernbern") return alert("Invalid code.");
+      await fetch("/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: btn.dataset.id, code })
+      });
+    };
+  });
+}
+
+// Update remaining timers every second
+setInterval(() => {
+  document.querySelectorAll("#activeBody tr").forEach(tr => {
+    const nextSpawnText = tr.children[3]?.textContent;
+    if (!nextSpawnText) return;
+    const td = tr.children[4];
+    const diff = new Date(nextSpawnText) - new Date();
+    if (diff <= 0) td.textContent = "Spawned";
+    else {
+      const hrs = Math.floor(diff / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      td.textContent = `${hrs}h ${mins}m ${secs}s`;
+    }
+  });
+}, 1000);
+
+// ====== OCR UPLOAD ======
+uploadBtn.onclick = async () => {
+  const file = imageUpload.files[0];
+  if (!file) return alert("No image selected.");
+  statusEl.textContent = "Detecting...";
+  const { createWorker } = Tesseract;
+  const worker = await createWorker();
+  await worker.loadLanguage("eng");
+  await worker.initialize("eng");
+  const result = await worker.recognize(file);
+  await worker.terminate();
+
+  const text = result.data.text.toLowerCase();
+  statusEl.textContent = "Detection done.";
+
+  let foundBoss = null;
+  for (const boss of bossList) {
+    if (text.includes(boss.toLowerCase())) foundBoss = boss;
+  }
+
+  if (!foundBoss) {
+    statusEl.textContent = "No boss detected.";
+    return;
+  }
+
+  const now = new Date();
+  const nextSpawn = new Date(now.getTime() + 8 * 3600000); // example 8h respawn
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  await fetch("/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      name: foundBoss,
+      location: "Unknown",
+      acquired: now,
+      nextSpawn
+    })
+  });
+  statusEl.textContent = `Added ${foundBoss} timer.`;
+};
+
+// Clear OCR status
+clearOcrBtn.onclick = () => {
+  statusEl.textContent = "";
+  imageUpload.value = "";
+};
+
+// ====== MANUAL ADD ======
+manualAdd.onclick = async () => {
+  const boss = manualBoss.value;
+  const acquired = manualAcquired.value;
+  if (!boss || !acquired) {
+    manualStatus.textContent = "Please fill all fields.";
+    return;
+  }
+  const now = new Date(acquired);
+  const nextSpawn = new Date(now.getTime() + 8 * 3600000); // example 8h respawn
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  await fetch("/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      name: boss,
+      location: "Unknown",
+      acquired: now,
+      nextSpawn
+    })
+  });
+  manualStatus.textContent = `${boss} added successfully.`;
+};
