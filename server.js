@@ -1,107 +1,161 @@
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
-import fs from "fs";
-import path from "path";
-import multer from "multer";
-import Tesseract from "tesseract.js";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const DATA_FILE = path.join(__dirname, "timers.json");
-const UPLOAD_DIR = path.join(__dirname, "uploads");
-
-// ensure upload dir exists
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-const upload = multer({ dest: UPLOAD_DIR });
-
-function loadTimers() {
-  try {
-    const raw = fs.readFileSync(DATA_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch (e) {
-    return [];
-  }
-}
-function saveTimers(timers) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(timers, null, 2));
-}
-
-let timers = loadTimers();
+// server.js
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(express.json());
+// Config
+const PORT = process.env.PORT || 3000;
+const DATA_FILE = path.join(__dirname, "timers.json");
+const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1433449406056763557/nifC_lCD78cMTOoMY6ryDBlain76udKiIEVOitIWT_n8XqygjGj_GWU0zDEf8v6GTxGu";
+const DELETE_SPECIAL_CODE = "bernbern";
+
+// serve static files from public/
 app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json());
 
-// REST endpoint (optional): fetch timers
-app.get("/api/timers", (req, res) => {
-  res.json(timers);
-});
-
-// OCR upload endpoint
-app.post("/api/ocr", upload.single("image"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded" });
+// Load timers (simple JSON persistence)
+let timers = [];
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    const raw = fs.readFileSync(DATA_FILE, "utf8");
+    timers = JSON.parse(raw) || [];
   }
-  const imagePath = req.file.path;
+} catch (e) {
+  console.error("Failed to load timers.json:", e.message);
+  timers = [];
+}
+
+function saveTimers() {
   try {
-    const result = await Tesseract.recognize(imagePath, "eng", { logger: m => {} });
-    const text = (result.data && result.data.text) ? result.data.text : "";
-    // cleanup
-    try { fs.unlinkSync(imagePath); } catch(e){ /* ignore */ }
-    return res.json({ text });
-  } catch (err) {
-    console.error("OCR error:", err);
-    try { fs.unlinkSync(imagePath); } catch(e){ /* ignore */ }
-    return res.status(500).json({ error: "OCR failed" });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(timers, null, 2));
+  } catch (e) {
+    console.error("Failed to save timers.json:", e.message);
   }
+}
+
+// REST API: return timers for external scripts
+app.get("/api/timers", (req, res) => {
+  return res.json(timers);
 });
 
-// Socket.io realtime
+// If OCR endpoint exists previously, keep a placeholder to avoid breaking UI upload
+app.post("/api/ocr", (req, res) => {
+  // Placeholder: front-end expects { text: "..." } shape. Implement OCR if desired.
+  res.json({ text: "" });
+});
+
+// Socket.IO: realtime sync + viewer count + events
 io.on("connection", (socket) => {
-  // on connect, send current timers
+  console.log("Client connected:", socket.id);
+
+  // Send initial data
   socket.emit("init", timers);
 
-  // client wants to add a timer (already computed nextSpawn on client)
-  socket.on("addTimer", (timer) => {
-    // Normalize & ensure id
-    timer.id = timer.id || `${Date.now()}-${Math.floor(Math.random()*10000)}`;
-    timers.push(timer);
-    saveTimers(timers);
-    io.emit("update", timers);
+  // Broadcast viewer count
+  const sendViewerCount = () => io.emit("viewerCount", { count: io.engine.clientsCount });
+  sendViewerCount();
+
+  // add timer
+  socket.on("addTimer", (obj) => {
+    // basic validation
+    if (!obj || !obj.id) return;
+    // ensure no duplicate id
+    if (!timers.find(t => t.id === obj.id)) {
+      const entry = { ...obj, spawned: false };
+      timers.push(entry);
+      saveTimers();
+      io.emit("update", timers);
+      console.log("Added timer:", entry.name);
+    }
   });
 
-  // client requests delete by id
-  socket.on("deleteTimer", (id) => {
-    timers = timers.filter(t => t.id !== id);
-    saveTimers(timers);
-    io.emit("update", timers);
+  // delete timer with code validation
+  // payload: { id, code }
+  socket.on("deleteTimer", (payload) => {
+    try {
+      if (!payload || !payload.id) return;
+      const { id, code } = payload;
+      if (code !== DELETE_SPECIAL_CODE) {
+        // Tell only requester that delete denied
+        socket.emit("deleteDenied", { id, message: "Special code incorrect. Delete canceled." });
+        return;
+      }
+      const before = timers.length;
+      timers = timers.filter(t => t.id !== id);
+      if (timers.length !== before) {
+        saveTimers();
+        io.emit("update", timers);
+        socket.emit("deletedSuccess", { id });
+        console.log("Deleted timer:", id);
+      }
+    } catch (e) {
+      console.error("deleteTimer error:", e);
+    }
   });
 
-  // client sends entire timers array (overwrite)
-  socket.on("replaceAll", (newTimers) => {
-    timers = newTimers || [];
-    saveTimers(timers);
-    io.emit("update", timers);
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+    sendViewerCount();
   });
-
-  // optional: edit timer
-  socket.on("editTimer", (updated) => {
-    timers = timers.map(t => t.id === updated.id ? updated : t);
-    saveTimers(timers);
-    io.emit("update", timers);
-  });
-
-  socket.on("disconnect", () => {});
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-app.get("/api/timers", (req, res) => res.json(timers));
+// ---- Discord notifier logic ----
+// We track which timer IDs we've warned / announced to avoid duplicate messages while service is running.
+const warned15 = new Set();
+const announcedSpawn = new Set();
 
+// Helper to post to Discord webhook
+async function postDiscordMessage(text) {
+  try {
+    await axios.post(DISCORD_WEBHOOK_URL, { content: text });
+  } catch (e) {
+    console.error("Failed to send Discord webhook:", e.message || e);
+  }
+}
+
+// Periodic check every 30 seconds
+setInterval(async () => {
+  if (!timers || timers.length === 0) return;
+  const now = Date.now();
+
+  for (const t of timers) {
+    // only handle timers with nextSpawn defined
+    if (!t.nextSpawn) continue;
+
+    const spawnTime = new Date(t.nextSpawn).getTime();
+    const minsLeft = Math.floor((spawnTime - now) / (60 * 1000));
+
+    // 15-minute warning
+    if (minsLeft === 15 && !warned15.has(t.id)) {
+      warned15.add(t.id);
+      const msg = `⚠️ **${t.name}** will spawn in **15 minutes!**`;
+      await postDiscordMessage(msg);
+      console.log("Discord 15-min warning sent for", t.name);
+    }
+
+    // Spawned (<= 0)
+    if (minsLeft <= 0 && !announcedSpawn.has(t.id)) {
+      announcedSpawn.add(t.id);
+      // mark as spawned in server data so UI can consider it if desired
+      t.spawned = true;
+      t.spawnedTime = new Date().toISOString();
+      const msg = `🟢 **${t.name}** has spawned!`;
+      await postDiscordMessage(msg);
+      saveTimers();
+      io.emit("update", timers);
+      console.log("Discord spawn message sent for", t.name);
+    }
+  }
+}, 30 * 1000); // every 30s
+
+// Start server
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
