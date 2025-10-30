@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS timers (
+  id SERIAL PRIMARY KEY,
+  boss VARCHAR(100) NOT NULL,
+  location VARCHAR(200),
+  acquired TIMESTAMP NOT NULL,
+  next_spawn TIMESTAMP NOT NULL
+);
