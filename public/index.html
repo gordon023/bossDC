@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Boss Timer - Real-time</title>
+  <title>Boss Timer - Punpun</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
     /* simple clean dark theme tweaks */
@@ -15,9 +15,14 @@
 </head>
 <body class="min-h-screen flex items-start justify-center p-6">
   <div class="w-full max-w-6xl">
-    <header class="mb-6">
-      <h1 class="text-2xl font-semibold">Boss kaba</h1>
-      <p class="muted">Real-time bitch.</p>
+    <header class="mb-6 flex items-baseline justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">Boss kaba</h1>
+        <p class="muted">Real-time bitch.</p>
+      </div>
+      <div class="small muted" id="viewerWrapper">
+        👁️ <span id="viewerCount">0</span> viewing
+      </div>
     </header>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -46,7 +51,7 @@
         <p id="manualStatus" class="small"></p>
       </div>
 
-      <!-- Right: Active / Spawned tables -->
+      <!-- Right: Active Timers only (Spawned table removed) -->
       <div class="card p-5 rounded-lg">
         <h2 class="font-medium mb-3">Active Timers</h2>
         <div class="overflow-auto max-h-64">
@@ -65,15 +70,8 @@
           </table>
         </div>
 
-        <h2 class="font-medium mt-4 mb-2">Spawned</h2>
-        <div class="overflow-auto max-h-44">
-          <table class="w-full text-left">
-            <thead class="text-sm text-gray-300">
-              <tr><th class="px-2 py-1">Boss</th><th class="px-2 py-1">Location</th><th class="px-2 py-1">Spawned At</th><th class="px-2 py-1">Next Spawn Info</th></tr>
-            </thead>
-            <tbody id="spawnedBody" class="text-sm"></tbody>
-          </table>
-        </div>
+        <!-- Spawned list removed as requested -->
+
       </div>
     </div>
 
@@ -81,231 +79,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    // client-side combined logic
-    const socket = io();
-
-    const bossReference = {
-      "Venatus": { time: 10, loc: "Corrupted Basin" },
-      "Viorent": { time: 10, loc: "Crescent Lake" },
-      "Ego": { time: 21, loc: "Ulan Canyon" },
-      "Livera": { time: 24, loc: "Protector`s Ruins" },
-      "Araneo": { time: 24, loc: "Lower Tomb of Tyriosa 1F" },
-      "Undomiel": { time: 24, loc: "Secret Laboratory" },
-      "Lady Dalia": { time: 18, loc: "Twilight Hill" },
-      "General Aquleus": { time: 29, loc: "Lower Tomb of Tyriosa 2F" },
-      "Amentis": { time: 29, loc: "Land of Glory" },
-      "Baron Braudmore": { time: 32, loc: "Battlefield of Templar" },
-      "Wannitas": { time: 48, loc: "Plateau of Revolution" },
-      "Metus": { time: 48, loc: "Plateau of Revolution" },
-      "Duplican": { time: 48, loc: "Plateau of Revolution" },
-      "Shuliar": { time: 95, loc: "Ruins of the War" },
-      "Gareth": { time: 32, loc: "Deadman`s Land District 1" },
-      "Titore": { time: 37, loc: "Deadman`s Land District 2" },
-      "Larba": { time: 35, loc: "Ruins of the War" },
-      "Catena": { time: 35, loc: "Deadman`s Land District 3" },
-      "Secreta": { time: 62, loc: "Silvergrass Field" },
-      "Ordo": { time: 62, loc: "Silvergrass Field" },
-      "Asta": { time: 62, loc: "Silvergrass Field" },
-      "Supore": { time: 62, loc: "Silvergrass Field" }
-    };
-
-    // UI elements
-    const manualBoss = document.getElementById("manualBoss");
-    const manualAcquired = document.getElementById("manualAcquired");
-    const manualAddBtn = document.getElementById("manualAdd");
-    const manualStatus = document.getElementById("manualStatus");
-    const imageUpload = document.getElementById("imageUpload");
-    const uploadBtn = document.getElementById("uploadBtn");
-    const clearOcrBtn = document.getElementById("clearOcrBtn");
-    const statusEl = document.getElementById("status");
-    const activeBody = document.getElementById("activeBody");
-    const spawnedBody = document.getElementById("spawnedBody");
-
-    let timers = [];
-    let spawned = [];
-
-    // populate boss dropdown
-    function populateBossDropdown() {
-      manualBoss.innerHTML = "<option value=''>Select Boss</option>";
-      Object.keys(bossReference).forEach(name => {
-        const o = document.createElement("option");
-        o.value = name;
-        o.textContent = name;
-        manualBoss.appendChild(o);
-      });
-    }
-    populateBossDropdown();
-
-    // helper - create timer object
-    function makeTimerObj(name, acquiredDate) {
-      const ref = bossReference[name] || { time: 24, loc: "Unknown" };
-      const acquired = new Date(acquiredDate);
-      const nextSpawn = new Date(acquired.getTime() + ref.time * 60 * 60 * 1000);
-      return {
-        id: `${Date.now()}-${Math.floor(Math.random()*10000)}`,
-        name,
-        location: ref.loc,
-        acquired: acquired.toISOString(),
-        nextSpawn: nextSpawn.toISOString()
-      };
-    }
-
-    // socket events
-    socket.on("init", (data) => {
-      timers = (data || []).filter(t => !t.spawned);
-      spawned = (data || []).filter(t => t.spawned);
-      // some older items may not have spawned flag; we'll compute dynamically below
-      renderAll();
-    });
-
-    socket.on("update", (data) => {
-      // server always sends full array
-      timers = (data || []).filter(t => !t.spawned);
-      spawned = (data || []).filter(t => t.spawned);
-      renderAll();
-    });
-
-    // Add manual boss
-    manualAddBtn.addEventListener("click", () => {
-      const name = manualBoss.value;
-      const timeVal = manualAcquired.value;
-      if (!name || !timeVal) {
-        manualStatus.textContent = "Please select boss and acquired time.";
-        return;
-      }
-      const obj = makeTimerObj(name, timeVal);
-      // push and inform server
-      socket.emit("addTimer", obj);
-      manualStatus.textContent = `Added ${name}.`;
-      manualBoss.value = "";
-      manualAcquired.value = "";
-    });
-
-    // OCR Upload handler: send file to /api/ocr and parse text client-side
-    uploadBtn.addEventListener("click", async () => {
-      const file = imageUpload.files[0];
-      if (!file) { statusEl.textContent = "Choose an image first."; return; }
-      statusEl.textContent = "Uploading image...";
-      const form = new FormData();
-      form.append("image", file);
-      try {
-        const res = await fetch("/api/ocr", { method: "POST", body: form });
-        const json = await res.json();
-        if (json.error) { statusEl.textContent = "OCR failed."; return; }
-        const text = (json.text || "").trim();
-        if (!text) { statusEl.textContent = "No text detected."; return; }
-        statusEl.textContent = "OCR complete. Parsing...";
-        // find boss name from reference
-        const lowered = text.toLowerCase();
-        const bossName = Object.keys(bossReference).find(b => lowered.includes(b.toLowerCase()));
-        // try to extract acquired time (supports formats like "acquired 10:12 PM" or just "10:12")
-        let acquiredTime = new Date();
-        const acqMatch = text.match(/acquired[^\d]*(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/i);
-        if (acqMatch) {
-          let timeStr = acqMatch[1].replace('.', ':').trim();
-          const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-          if (!isNaN(parsed)) acquiredTime = parsed;
-        } else {
-          // alternative match: e.g., "Obtained 10:12"
-          const altMatch = text.match(/(obtained|received)[^\d]*(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/i);
-          if (altMatch) {
-            let timeStr = altMatch[2].replace('.', ':').trim();
-            const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-            if (!isNaN(parsed)) acquiredTime = parsed;
-          } else {
-            // try any time-like pattern
-            const anyMatch = text.match(/(\d{1,2}[:.]\d{2}\s?(AM|PM|am|pm)?)/);
-            if (anyMatch) {
-              let timeStr = anyMatch[1].replace('.', ':').trim();
-              const parsed = new Date(`${new Date().toDateString()} ${timeStr}`);
-              if (!isNaN(parsed)) acquiredTime = parsed;
-            }
-          }
-        }
-
-        if (!bossName) {
-          statusEl.textContent = "No boss name detected from image.";
-          return;
-        }
-
-        const timerObj = makeTimerObj(bossName, acquiredTime.toISOString());
-        // send to server
-        socket.emit("addTimer", timerObj);
-        statusEl.textContent = `Detected ${bossName}. Added timer.`;
-        imageUpload.value = "";
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = "OCR/upload failed.";
-      }
-    });
-
-    clearOcrBtn.addEventListener("click", () => {
-      imageUpload.value = "";
-      statusEl.textContent = "";
-    });
-
-    // delete handler from UI
-    function deleteTimer(id) {
-      socket.emit("deleteTimer", id);
-    }
-
-    // Render logic
-    function renderAll() {
-      // Recompute active vs spawned based on nextSpawn time
-      const now = Date.now();
-      const activeList = [];
-      const spawnedList = [];
-      const combined = [...timers, ...spawned]; // some items may be missing spawn flag
-      combined.forEach(t => {
-        const next = new Date(t.nextSpawn).getTime();
-        if (isNaN(next)) return; // skip corrupt
-        if (next > now) activeList.push(t);
-        else spawnedList.push(Object.assign({}, t, { spawnedTime: t.spawnedTime || new Date(next).toISOString(), nextSpawnText: `Next spawn at ${new Date(t.nextSpawn).toLocaleString()}` }));
-      });
-
-      // Render active table
-      activeBody.innerHTML = "";
-      activeList.forEach(t => {
-        const next = new Date(t.nextSpawn).getTime();
-        const remainingSec = Math.max(0, Math.floor((next - Date.now())/1000));
-        const hrs = Math.floor(remainingSec / 3600);
-        const mins = Math.floor((remainingSec % 3600) / 60);
-        const secs = remainingSec % 60;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="px-2 py-1">${escapeHtml(t.name)}</td>
-          <td class="px-2 py-1">${escapeHtml(t.location || "")}</td>
-          <td class="px-2 py-1">${new Date(t.acquired).toLocaleString()}</td>
-          <td class="px-2 py-1">${new Date(t.nextSpawn).toLocaleString()}</td>
-          <td class="px-2 py-1">${hrs}h ${mins}m ${secs}s</td>
-          <td class="px-2 py-1"><button class="px-2 py-1 bg-red-600 rounded text-black" onclick="deleteTimer('${t.id}')">Delete</button></td>
-        `;
-        activeBody.appendChild(tr);
-      });
-
-      // Render spawned table
-      spawnedBody.innerHTML = "";
-      spawnedList.forEach(t => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="px-2 py-1">${escapeHtml(t.name)}</td>
-          <td class="px-2 py-1">${escapeHtml(t.location || "")}</td>
-          <td class="px-2 py-1">${new Date(t.spawnedTime || t.nextSpawn).toLocaleString()}</td>
-          <td class="px-2 py-1">${escapeHtml(t.nextSpawnText || `Next spawn at ${new Date(t.nextSpawn).toLocaleString()}`)}</td>
-        `;
-        spawnedBody.appendChild(tr);
-      });
-    }
-
-    // small helper to avoid XSS injection for any string
-    function escapeHtml(s) {
-      if (!s) return "";
-      return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    }
-
-    // update every second
-    setInterval(renderAll, 1000);
-  </script>
+  <script src="/client.js"></script>
 </body>
 </html>
