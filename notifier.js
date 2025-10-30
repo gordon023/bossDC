@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/XXXX/YYYY";
+const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1433440952663408660/N4u6db9VS-AEbRu-b8jibgezqx_FFhzc0DaOx4L2rQD_H2_eI2F7Pt5PvCAAmSwiiD-v";
 const SITE_API = "https://boss-1-jhbq.onrender.com/api/timers"; // needs to expose timer data as JSON
 
 // remember which bosses we've already notified for
